@@ -1,3 +1,5 @@
+from indy_crypto.big_number import BigNumber
+
 from indy_client.test.conftest import nodeSet
 from indy_node.server.plugin.agent_authz.constants import ADDRESS, \
     GET_AGENT_AUTHZ, GET_AGENT_AUTHZ_ACCUM, ACCUMULATOR_ID, ACCUMULATOR_1
@@ -43,19 +45,22 @@ def test_get_accumulator(looper, nodeSet, agent1_wallet, agent1_client,
                                       agent1_wallet, agent1_client)
     v2 = get_result_data_for_op(looper, query_wallet_client, sdk_pool_handle,
                                 op)
-    assert (v1**commitment1) % config.AuthzAccumMod == v2
+    assert BigNumber.modular_exponentiation(int(v1), commitment1,
+                                            config.AuthzAccumMod[ACCUMULATOR_1]) == int(v2)
 
     _, _, _, commitment2 = give_prove(looper, addr, admin_verkey,
                                       agent1_wallet, agent1_client)
     v3 = get_result_data_for_op(looper, query_wallet_client, sdk_pool_handle,
                                 op)
-    assert (v2 ** commitment2) % config.AuthzAccumMod == v3
+    assert BigNumber.modular_exponentiation(int(v2), commitment2,
+                                            config.AuthzAccumMod[ACCUMULATOR_1]) == int(v3)
 
     _, _, _, commitment3 = give_prove(looper, addr, admin_verkey,
                                       agent1_wallet, agent1_client)
     v4 = get_result_data_for_op(looper, query_wallet_client, sdk_pool_handle,
                                 op)
-    assert (v3 ** commitment3) % config.AuthzAccumMod == v4
+    assert BigNumber.modular_exponentiation(int(v3), commitment3,
+                                            config.AuthzAccumMod[ACCUMULATOR_1]) == int(v4)
 
 
 def test_get_auth_policy_by_address(looper, nodeSet, agent1_wallet,
@@ -83,8 +88,7 @@ def test_get_auth_policy_by_address(looper, nodeSet, agent1_wallet,
     data = get_result_data_for_op(looper, query_wallet_client,
                                   sdk_pool_handle, op)
 
-    assert [admin_verkey, admin_auth, admin_commitment] in data
-    assert [granter_verkey, granter_auth, 0] in data
-    assert [revoker_verkey, revoker_auth, 0] in data
-    assert [prover_verkey, prover_auth, prover_commitment] in data
-
+    assert [admin_verkey, admin_auth, str(admin_commitment)] in data
+    assert [granter_verkey, granter_auth, '0'] in data
+    assert [revoker_verkey, revoker_auth, '0'] in data
+    assert [prover_verkey, prover_auth, str(prover_commitment)] in data

@@ -27,9 +27,14 @@ class DomainReqHandlerWithAuthz:
     ACCUMULATOR_STATE_KEY_PREFIX = '\xfe'
     _state_val_outer_sedes = CountableList(List([raw, big_endian_int, big_endian_int]))
 
-    def __init__(self, domain_state, cache: AgentAuthzCommitmentCache, config):
+    def __init__(self, domain_state, cache: AgentAuthzCommitmentCache,
+                 commitment_db1, commitment_db2, config):
         self.domain_state = domain_state
         self.agent_authz_cache = cache
+        self.commitment_dbs = {
+            ACCUMULATOR_1: commitment_db1,
+            ACCUMULATOR_2: commitment_db2
+        }
         self.config = config
 
     def _do_static_validation_agent_authz(self, identifier, reqId, operation):
@@ -78,6 +83,7 @@ class DomainReqHandlerWithAuthz:
         policy_address = request.operation[ADDRESS]
         policy = self.get_policy_from_state(policy_address,
                                             is_committed=True)
+        policy = [list(t) for t in policy]
         for item in policy:
             if len(item) > 2 and isinstance(item[2], int):
                 item[2] = str(item[2])
@@ -91,7 +97,7 @@ class DomainReqHandlerWithAuthz:
         accum_id = request.operation[ACCUMULATOR_ID]
         accum_value = self.agent_authz_cache.get_accumulator(accum_id,
                                                              is_committed=True)
-        # accum_value = int(accum_value)
+        accum_value = str(int(accum_value))
         return DomainReqHandler.make_result(request=request,
                                             data=accum_value,
                                             last_seq_no=0,  # TODO: Fix me
@@ -184,8 +190,8 @@ class DomainReqHandlerWithAuthz:
             accum = cache.get_accumulator(accum_id, is_committed=is_committed)
             accum = int(accum)
         except KeyError:
-            accum = config.AuthzAccumGenerator
-        updated_val = update_accumulator_val(accum, value, config.AuthzAccumMod)
+            accum = config.AuthzAccumGenerator[accum_id]
+        updated_val = update_accumulator_val(accum, value, config.AuthzAccumMod[accum_id])
         encoded_val = str(updated_val).encode()
         cache.set_accumulator(ACCUMULATOR_1, encoded_val,
                               is_committed=is_committed)
@@ -255,14 +261,36 @@ class DomainReqHandlerWithAuthz:
     def valid_txn_types(self) -> set:
         return self.write_types.union(self.query_types)
 
-    def convert_big_numbers_to_string(self, committed_txns, pp_time):
-        # If `ADDRESS` and `COMMITMENT` are integers, convert them to string
+    def pre_send_reply_hook(self, committed_txns, pp_time):
         for txn in committed_txns:
-            if txn.get(TXN_TYPE) in self.valid_txn_types:
-                if isinstance(txn.get(ADDRESS), int):
-                    txn[ADDRESS] = str(txn[ADDRESS])
-                if isinstance(txn.get(COMMITMENT), int):
-                    txn[COMMITMENT] = str(txn[COMMITMENT])
+            typ = txn.get(TXN_TYPE)
+            if typ in self.valid_txn_types:
+                if typ in self.write_types:
+                    try:
+                        a = self.agent_authz_cache.get_accumulator(ACCUMULATOR_1, True)
+                        txn[ACCUMULATOR_1] = int(a)
+                    except KeyError:
+                        pass
+                    try:
+                        a = self.agent_authz_cache.get_accumulator(ACCUMULATOR_2, True)
+                        txn[ACCUMULATOR_2] = int(a)
+                    except KeyError:
+                        pass
+
+                self._convert_big_numbers_to_string(txn)
+
+    def post_request_commit_hook(self, txn, pp_time, state_root, txn_root):
+        typ = txn.get(TXN_TYPE)
+        if typ in self.write_types:
+            pass
+
+    def _convert_big_numbers_to_string(self, txn):
+        # If `ADDRESS`, `COMMITMENT` or ACCUMULATORs are integers, convert them to string
+        to_convert = [ADDRESS, COMMITMENT, ACCUMULATOR_1, ACCUMULATOR_2]
+        for field in to_convert:
+            if isinstance(txn.get(field), int):
+                txn[field] = str(txn[field])
 
     def add_hooks(self, node):
-        node.register_hook(NodeHooks.PRE_SEND_REPLY, self.convert_big_numbers_to_string)
+        node.register_hook(NodeHooks.PRE_SEND_REPLY, self.pre_send_reply_hook)
+        node.register_hook(NodeHooks.POST_REQUEST_COMMIT, self.post_request_commit_hook)
